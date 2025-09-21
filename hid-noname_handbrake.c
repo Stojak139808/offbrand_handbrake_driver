@@ -173,7 +173,11 @@ static int offbrand_handbrake_data_correction(struct hid_device *hdev,
     u16 mapped_axis_data = (u16)((handbrake_axis_input * 0x7FFFU) / 255U);
 
     // reorganize data from the old packet into the new packet
-    data[NEW_HANDBRAKE_PACKET_BUTTON_OFFSET] = data[1] & 0x01U;
+
+    /* TODO: should be 0x01, but games recognize this handbrake as xbox
+       controller, and this button as A, which gets annoying in games
+    */
+    data[NEW_HANDBRAKE_PACKET_BUTTON_OFFSET] = data[1] & 0x00U;
     data[NEW_HANDBRAKE_PACKET_X_AXIS_OFFSET] = (u8)(mapped_axis_data & 0xFFU);
     data[NEW_HANDBRAKE_PACKET_X_AXIS_OFFSET + 1] = 
         (u8)((mapped_axis_data & 0xFF00U) >> 8U);
