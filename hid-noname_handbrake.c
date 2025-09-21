@@ -2,12 +2,55 @@
 #include <linux/hid.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/string.h>
 
-#define USB_VENDOR_ID_OFFBRAND_HANDBRAKE 0x1eaf
-#define USB_DEVICE_ID_OFFBRAND_HANDBRAKE 0x0024
+
+/* static functions declarations */
+static const __u8* offbrand_handbrake_HID_descriptor_fixup(
+        struct hid_device *hdev, __u8 *rdesc, unsigned int *rsize);
+
+static int offbrand_handbrake_data_correction(struct hid_device *hdev,
+        struct hid_report *report, u8 *data, int size);
+
+/* macros */
+#define USB_VENDOR_ID_OFFBRAND_HANDBRAKE 0x1EAFU
+#define USB_DEVICE_ID_OFFBRAND_HANDBRAKE 0x0024U
+
+#define OFFBRAND_HANDBRAKE_MODULE_DESCRIPTION \
+        "This module fixes the non standard input of off-brand simracing \
+        handbrakes into a standard HID joystick input, readable and \
+        interpretable by Linux"
+
+// the original packet length sent by the handbrake
+#define ORIGINAL_HANDBRAKE_PACKET_LENGTH    13U
+
+// the new packet length, adjusted to the new descriptor, without the padding
+#define NEW_HANDBRAKE_PACKET_LENGTH         5U
+
+#define NEW_HANDBRAKE_PACKET_BUTTON_OFFSET  1U
+#define NEW_HANDBRAKE_PACKET_X_AXIS_OFFSET  2U
+#define NEW_HANDBRAKE_PACKET_Y_AXIS_OFFSET  4U
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION(OFFBRAND_HANDBRAKE_MODULE_DESCRIPTION);
+
+
+/* structures */
+static const struct hid_device_id offbrand_handbrake_id_table[] = {
+    {HID_USB_DEVICE(USB_VENDOR_ID_OFFBRAND_HANDBRAKE,
+                    USB_DEVICE_ID_OFFBRAND_HANDBRAKE)},
+    {}
+};
+
+static struct hid_driver handbrake_driver = {
+    .name = "offbrand handbrake",
+    .id_table = offbrand_handbrake_id_table,
+    .report_fixup = offbrand_handbrake_HID_descriptor_fixup,
+    .raw_event = offbrand_handbrake_data_correction,
+};
 
 /* original HID descriptor from ./hid-decode
-static u8 orig_rdesc[] = {
+static u8 orig_handbrake_rdesc[] = {
 0x05, 0x01,                    // Usage Page (Generic Desktop)        0
 0x09, 0x04,                    // Usage (Joystick)                    2
 0xa1, 0x01,                    // Collection (Application)            4
@@ -54,95 +97,94 @@ static u8 orig_rdesc[] = {
 };
 */
 
-static u8 fixed_rdesc[] = {
+static const u8 fixed_HID_descriptor[] = {
     /* Top-level Application Collection: Game Pad */
-    0x05, 0x01,        /* Usage Page (Generic Desktop) */
-    0x09, 0x05,        /* Usage (Game Pad) */
-    0xA1, 0x01,        /* Collection (Application) */
+    0x05U, 0x01U,        // Usage Page (Generic Desktop)
+    0x09U, 0x05U,        // Usage (Game Pad)
+    0xA1U, 0x01U,        // Collection (Application)
 
         /* ---- Report ID ---- */
-        0x85, 0x14,    /* Report ID = 0x14 */
+        0x85U, 0x14U,    // Report ID = 0x14
 
         /* ---- Byte 1: Button 1 (bit 0) ---- */
-        0x05, 0x09,    /* Usage Page (Button) */
-        0x19, 0x01,    /* Usage Minimum (Button 1) */
-        0x29, 0x02,    /* Usage Maximum (Button 2) */
-        0x15, 0x00,    /* Logical Minimum (0) */
-        0x25, 0x01,    /* Logical Maximum (1) */
-        0x75, 0x01,    /* Report Size (1 bit) */
-        0x95, 0x01,    /* Report Count (2 field) */
-        0x81, 0x02,    /* Input (Data,Var,Abs) -> Button 1 */
-        0x75, 0x07,    /* Report Size (6 bits) */
-        0x95, 0x01,    /* Report Count (1 field) */
-        0x81, 0x03,    /* Input (Const,Var,Abs) -> padding bits */
+        0x05U, 0x09U,    // Usage Page (Button)
+        0x19U, 0x01U,    // Usage Minimum (Button 1)
+        0x29U, 0x02U,    // Usage Maximum (Button 2)
+        0x15U, 0x00U,    // Logical Minimum (0)
+        0x25U, 0x01U,    // Logical Maximum (1)
+        0x75U, 0x01U,    // Report Size (1 bit)
+        0x95U, 0x02U,    // Report Count (2 field)
+        0x81U, 0x02U,    // Input (Data,Var,Abs) -> Button 1
+        0x75U, 0x06U,    // Report Size (6 bits)
+        0x95U, 0x01U,    // Report Count (1 field)
+        0x81U, 0x03U,    // Input (Const,Var,Abs) -> padding bits
 
         /* ---- Physical Collection for Axes ---- */
-        0xA1, 0x00,    /* Collection (Physical) */
+        0xA1U, 0x00U,    // Collection (Physical)
 
-            /* Byte 2: Axis X (real) full range 0–32767 */
-            0x05, 0x01,        /* Usage Page (Generic Desktop) */
-            0x09, 0x30,        /* Usage (X) */
-            0x15, 0x00,        /* Logical Minimum = 0 */
-            0x26, 0xFF, 0x7F,  /* Logical Maximum = 32767 */
-            0x75, 0x10,        /* Report Size = 8 bits (device sends 1 byte) */
-            0x95, 0x01,        /* Report Count = 1 */
-            0x81, 0x02,        /* Input (Data,Var,Abs) -> Axis X */
+            // Byte 2 - 3: Axis X (real) full range 0–32767
+            0x05U, 0x01U,        // Usage Page (Generic Desktop)
+            0x09U, 0x30U,        // Usage (X) */
+            0x15U, 0x00U,        // Logical Minimum = 0
+            0x26U, 0xFFU, 0x7FU, // Logical Maximum = 32767
+            0x75U, 0x10U,        // Report Size = 16 bits (device sends 2 bytes)
+            0x95U, 0x01U,        // Report Count = 1
+            0x81U, 0x02U,        // Input (Data,Var,Abs) -> Axis X
 
-            /* Byte 3: Dummy Axis Y (Data) */
-            0x09, 0x31,        /* Usage (Y) */
-            0x15, 0x00,        /* Logical Minimum = 0 */
-            0x26, 0xFF, 0x7F,  /* Logical Maximum = 32767 */
-            0x75, 0x08,        /* Report Size = 8 bits */
-            0x95, 0x01,        /* Report Count = 1 */
-            0x81, 0x03,        /* Input (Const,Var,Abs) -> Dummy Y axis */
+            // Byte 4: Dummy Axis Y (Data)
+            0x09U, 0x31U,        // Usage (Y)
+            0x15U, 0x00U,        // Logical Minimum = 0
+            0x26U, 0xFFU, 0x7FU, // Logical Maximum = 32767
+            0x75U, 0x08U,        // Report Size = 8 bits
+            0x95U, 0x01U,        // Report Count = 1
+            0x81U, 0x02U,        // Input (data,Var,Abs) -> Dummy Y axis
 
-        0xC0,            /* End Physical Collection */
+        0xC0U,            // End Physical Collection
 
         /* ---- Extra dummy buttons or padding ---- */
-        0x75, 0x08,    /* Report Size = 8 bits */
-        0x95, 0x08,    /* Report Count = 8 fields */
-        0x81, 0x03,    /* Input (Const,Var,Abs) -> padding */
+        0x75U, 0x08U,    // Report Size = 8 bits
+        0x95U, 0x08U,    // Report Count = 8 fields
+        0x81U, 0x03U,    // Input (Const,Var,Abs) -> padding
 
-    0xC0               /* End Application Collection */
+    0xC0U               // End Application Collection
 };
 
-static const __u8* offbrand_handbrake_HID_descriptor_fixup(struct hid_device *hdev,
-                                      __u8 *rdesc,
-                                      unsigned int *rsize)
+
+/* static functions definitions */
+static const __u8* offbrand_handbrake_HID_descriptor_fixup(
+        struct hid_device *hdev, __u8 *rdesc, unsigned int *rsize)
 {
-    hid_info(hdev, "Fixing up HID Descriptor Report for the off-brand handbrake");
-    *rsize = sizeof(fixed_rdesc);
-    return fixed_rdesc;
+    hid_info(hdev,
+        "Fixing up HID Descriptor Report for the off-brand handbrake");
+
+    *rsize = sizeof(fixed_HID_descriptor);
+    return fixed_HID_descriptor;
 }
 
-static int offbrand_handbrake_data_correction(struct hid_device *hdev, struct hid_report *report,
-    u8 *data, int size){
+static int offbrand_handbrake_data_correction(struct hid_device *hdev,
+        struct hid_report *report, u8 *data, int size){
 
-    u8 handbrake_axis_input = data[size - 1];
-    u16 mapped_data = (u16)((handbrake_axis_input * 0x7FFF) / 255);
-
-    data[2U] = (u8)(mapped_data & 0xFF);
-    data[3U] = (u8)((mapped_data & 0xFF00) >> 8);
-    for (int i = 4; i < size; i++){
-        data[i] = 0x00U;
+    if (ORIGINAL_HANDBRAKE_PACKET_LENGTH != size){
+        // Device sent an undefined packet, ignore it
+        return -1;
     }
 
-    return 0;
+    u8 handbrake_axis_input = data[ORIGINAL_HANDBRAKE_PACKET_LENGTH - 1];
+    u16 mapped_axis_data = (u16)((handbrake_axis_input * 0x7FFFU) / 255U);
+
+    // reorganize data from the old packet into the new packet
+    data[NEW_HANDBRAKE_PACKET_BUTTON_OFFSET] = data[1] & 0x01U;
+    data[NEW_HANDBRAKE_PACKET_X_AXIS_OFFSET] = (u8)(mapped_axis_data & 0xFFU);
+    data[NEW_HANDBRAKE_PACKET_X_AXIS_OFFSET + 1] = 
+        (u8)((mapped_axis_data & 0xFF00U) >> 8U);
+    data[NEW_HANDBRAKE_PACKET_Y_AXIS_OFFSET] = 0;
+
+    // set rest of the bytes to 0x00U
+    memset((u8*)(data + NEW_HANDBRAKE_PACKET_LENGTH), 
+        0x00U, ORIGINAL_HANDBRAKE_PACKET_LENGTH - NEW_HANDBRAKE_PACKET_LENGTH);
+
+    return 0U;
 }
 
-
-static const struct hid_device_id offbrand_handbrake_id_table[] = {
-    { HID_USB_DEVICE(USB_VENDOR_ID_OFFBRAND_HANDBRAKE, USB_DEVICE_ID_OFFBRAND_HANDBRAKE)},
-    { }
-};
-
-static struct hid_driver handbrake_driver = {
-    .name = "offbrand handbrake",
-    .id_table = offbrand_handbrake_id_table,
-    .report_fixup = offbrand_handbrake_HID_descriptor_fixup,
-    .raw_event = offbrand_handbrake_data_correction,
-};
-
+// register the new driver
 module_hid_driver(handbrake_driver);
-
-MODULE_LICENSE("GPL");
