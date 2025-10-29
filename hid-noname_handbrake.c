@@ -124,7 +124,7 @@ static const u8 fixed_HID_descriptor[] = {
 
             // Byte 2 - 3: Axis X (real) full range 0–32767
             0x05U, 0x01U,        // Usage Page (Generic Desktop)
-            0x09U, 0x30U,        // Usage (X) */
+            0x09U, 0x32U,        // Usage (Z) */
             0x15U, 0x00U,        // Logical Minimum = 0
             0x26U, 0xFFU, 0x7FU, // Logical Maximum = 32767
             0x75U, 0x10U,        // Report Size = 16 bits (device sends 2 bytes)
